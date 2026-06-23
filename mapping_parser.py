@@ -19,9 +19,11 @@ ROW_KEYWORDS = {
         "salesforce api", "scrm api",
     ],
     "scrm_label": [
-        "andar label", "andar ui label", "andar label:",
+        "andar label", "andar label:",
         "dt label", "dtracker label", "scrm label",
-        "field label", "ui label",
+        "field label",
+        # NOTE: "andar ui label" is intentionally excluded here —
+        # it belongs in andar_field (Andar Location), not SCRM Field Label
     ],
     # Primary Andar field row (human-readable path OR import header when only one exists)
     "andar_field": [
@@ -31,6 +33,7 @@ ROW_KEYWORDS = {
         "andar field - organizations",
         "andar field\n", "andar field (import",
         "andar location",
+        "andar ui label",              # Notes Task-style templates
     ],
     # Secondary Andar row — ONLY matches "Andar API Field / Import Header"
     # (a separate row that appears AFTER the primary andar_field row)

@@ -1,159 +1,175 @@
 """
 app.py
-Streamlit UI for the UAT Excel Transformer.
+Streamlit UI for the UAT Template Generator.
+User uploads ONE file (the strategy mapping template).
+The blank UAT template is hardcoded inside this app.
 """
 
+import base64
 import re
 from datetime import datetime
+from pathlib import Path
 
 import streamlit as st
 
-from transformer import transform
+from mapping_parser import parse_mapping_template
+from template_builder import build_output
 
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="UAT Template Transformer",
+    page_title="UAT Template Generator",
     page_icon="📊",
     layout="centered",
 )
 
-# ── Styles ─────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
     .block-container { padding-top: 2rem; max-width: 780px; }
-    .stAlert { border-radius: 8px; }
-    div[data-testid="stFileUploader"] { border-radius: 8px; }
     .step-label {
         font-size: 0.78rem;
         font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.05em;
         color: #888;
-        margin-bottom: 0.2rem;
+        margin-bottom: 0.25rem;
     }
-    .section-divider { margin: 1.5rem 0 1rem; border-top: 1px solid #eee; }
+    .divider { margin: 1.5rem 0 1rem; border-top: 1px solid #eee; }
 </style>
 """, unsafe_allow_html=True)
 
+# ── Load blank template from file ─────────────────────────────────────────────
+# The blank template lives in the repo alongside app.py
+BLANK_TEMPLATE_PATH = Path(__file__).parent / "UWC_NPSP_User_Acceptance_Testing_Template.xlsx"
+
+@st.cache_data
+def load_blank_template() -> bytes:
+    with open(BLANK_TEMPLATE_PATH, "rb") as f:
+        return f.read()
+
+try:
+    blank_bytes = load_blank_template()
+except FileNotFoundError:
+    st.error(
+        "❌ Blank template file not found. "
+        "Make sure `UWC_NPSP_User_Acceptance_Testing_Template.xlsx` "
+        "is in the same folder as `app.py`."
+    )
+    st.stop()
+
 # ── Header ─────────────────────────────────────────────────────────────────────
-st.title("📊 UAT Template Transformer")
+st.title("📊 UAT Template Generator")
 st.caption(
-    "Upload your UAT tracking file and the strategy mapping template. "
-    "The tool will add DT Location, Mapping Notes, and branch sheets automatically."
+    "Upload the strategy mapping template for any object. "
+    "The app generates a fully formatted UAT tracking file — "
+    "no UAT file needed."
 )
 
-st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
 # ── Step 1: Source systems ─────────────────────────────────────────────────────
 st.markdown('<p class="step-label">Step 1 — Source Systems</p>', unsafe_allow_html=True)
-st.markdown("Which source system(s) does this migration come **from**?")
+st.markdown("Which source system(s) is this migration coming **from**?")
 
 col1, col2, col3 = st.columns(3)
 with col1:
-    use_andar    = st.checkbox("Andar",         value=True)
+    use_andar = st.checkbox("Andar",         value=True)
 with col2:
-    use_dtracker = st.checkbox("DTracker",      value=True)
+    use_dt    = st.checkbox("DTracker",      value=True)
 with col3:
-    use_re       = st.checkbox("Raiser's Edge", value=False)
+    use_re    = st.checkbox("Raiser's Edge", value=False)
 
 source_systems = []
-if use_andar:    source_systems.append("Andar")
-if use_dtracker: source_systems.append("DTracker")
-if use_re:       source_systems.append("Raiser's Edge")
+if use_andar: source_systems.append("Andar")
+if use_dt:    source_systems.append("DTracker")
+if use_re:    source_systems.append("Raiser's Edge")
 
-if use_re:
-    st.info(
-        "ℹ️ Raiser's Edge support: the transformer will include RE fields "
-        "if the mapping template contains a RE-labelled row. "
-        "Branch sheets for RE will be added as **WRE1** and **WRE2**.",
-        icon=None,
-    )
+if not source_systems:
+    st.warning("Please select at least one source system.")
 
-st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-# ── Step 2: File uploads ───────────────────────────────────────────────────────
-st.markdown('<p class="step-label">Step 2 — Upload Files</p>', unsafe_allow_html=True)
+# ── Step 2: Upload mapping template ───────────────────────────────────────────
+st.markdown('<p class="step-label">Step 2 — Upload Strategy Mapping Template</p>',
+            unsafe_allow_html=True)
+st.caption(
+    "e.g. `ObjS02_02_wstrat_npe01__OppPayment__c_Template.xlsx` — "
+    "works for any object type."
+)
 
-col_a, col_b = st.columns(2)
+mapping_file = st.file_uploader(
+    "Mapping template", type=["xlsx"], label_visibility="collapsed"
+)
 
-with col_a:
-    st.markdown("**UAT Tracking File**")
-    st.caption("e.g. `GAU_-_UWEM_Data_Migration_UAT_-_Round_1.xlsx`")
-    uat_file = st.file_uploader(
-        "UAT file", type=["xlsx"], label_visibility="collapsed", key="uat"
-    )
-
-with col_b:
-    st.markdown("**Strategy Mapping Template**")
-    st.caption("e.g. `ObjS01_05_wmarit_npsp__GeneralAccountingUnit__c_Template.xlsx`")
-    template_file = st.file_uploader(
-        "Template file", type=["xlsx"], label_visibility="collapsed", key="tmpl"
-    )
-
-st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
 # ── Step 3: Output filename ────────────────────────────────────────────────────
-st.markdown('<p class="step-label">Step 3 — Output File Name (optional)</p>', unsafe_allow_html=True)
+st.markdown('<p class="step-label">Step 3 — Output File Name (optional)</p>',
+            unsafe_allow_html=True)
 
-# Auto-suggest a name based on UAT filename
 suggested_name = ""
-if uat_file:
-    raw = uat_file.name.replace(".xlsx", "")
-    # Replace UWEM → UWM and strip _temp suffixes
-    suggested_name = re.sub(r"(?i)uwem", "UWM", raw)
-    suggested_name = re.sub(r"(?i)_temp$", "", suggested_name)
-    suggested_name += ".xlsx"
+if mapping_file:
+    raw = mapping_file.name.replace(".xlsx", "")
+    # Strip strategy author prefix (wstrat, wmarit, etc.) and Template suffix
+    raw = re.sub(r"_w[a-z]+_", "_", raw)
+    raw = re.sub(r"_Template$", "", raw, flags=re.IGNORECASE)
+    raw = re.sub(r"_temp$",     "", raw, flags=re.IGNORECASE)
+    suggested_name = f"UWM_{raw}_UAT_Round_1.xlsx"
 
 output_name = st.text_input(
     "Output filename",
     value=suggested_name,
-    placeholder="UWM_GAU_-_Data_Migration_UAT_-_Round_1.xlsx",
+    placeholder="UWM_Payment_UAT_Round_1.xlsx",
     label_visibility="collapsed",
 )
 if output_name and not output_name.endswith(".xlsx"):
     output_name += ".xlsx"
 
-st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-# ── Step 4: Transform ──────────────────────────────────────────────────────────
+# ── Step 4: Generate ──────────────────────────────────────────────────────────
 st.markdown('<p class="step-label">Step 4 — Generate</p>', unsafe_allow_html=True)
 
-ready = uat_file and template_file and len(source_systems) > 0
+ready = mapping_file is not None and len(source_systems) > 0
 
-if not source_systems:
-    st.warning("Please select at least one source system above.")
-
-transform_btn = st.button(
-    "⚙️  Generate Transformed Excel",
+generate_btn = st.button(
+    "⚙️  Generate UAT Template",
     disabled=not ready,
     use_container_width=True,
     type="primary",
 )
 
-if transform_btn and ready:
+if generate_btn and ready:
     progress_placeholder = st.empty()
-    status_log = []
+    log_lines = []
 
     def update_progress(msg):
-        status_log.append(msg)
+        log_lines.append(msg)
         progress_placeholder.markdown(
-            "\n".join(f"- {m}" for m in status_log[-4:])
+            "\n".join(f"- {m}" for m in log_lines[-4:])
         )
 
     try:
-        with st.spinner("Transforming…"):
-            result_bytes = transform(
-                uat_bytes=uat_file.read(),
-                template_bytes=template_file.read(),
+        with st.spinner("Building template…"):
+            parsed = parse_mapping_template(
+                mapping_file.read(),
+                filename=mapping_file.name,
+            )
+            result_bytes = build_output(
+                blank_template_bytes=blank_bytes,
+                parsed=parsed,
                 source_systems=source_systems,
-                progress_callback=update_progress,
+                progress=update_progress,
             )
 
         progress_placeholder.empty()
 
-        st.success("✅ Transformation complete! Click below to download.")
+        object_name = parsed["meta"]["object_name"]
+        field_count = len(parsed["meta"]["api_names_ordered"])
 
-        final_name = output_name or f"UWM_UAT_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+        st.success(f"✅ Done! Generated {field_count} field rows for **{object_name}**.")
+
+        final_name = output_name or \
+            f"UWM_UAT_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
 
         st.download_button(
             label=f"⬇️  Download  {final_name}",
@@ -163,39 +179,47 @@ if transform_btn and ready:
             use_container_width=True,
         )
 
-        # Summary
         with st.expander("What was generated", expanded=True):
+            branch_lines = []
+            if "Andar" in source_systems:
+                branch_lines.append("- WHALIF, WPEI (Andar branches)")
+            if "DTracker" in source_systems:
+                branch_lines.append("- WFREDE, WSTJOH (DTracker branches)")
+            if "Raiser's Edge" in source_systems:
+                branch_lines.append("- WRE1, WRE2 (Raiser's Edge branches)")
+
             st.markdown(f"""
-- **Template sheet** renamed/updated with:
-  - Andar Location column
-  - DT Location column (populated from mapping template)
-  - Mapping Notes column (with Andar Logic / DTracker Logic)
-  - Calibri 12 font and thin borders throughout
-- **Branch sheets created:**
-  {"- WHALIF, WPEI (Andar branches)" if "Andar" in source_systems else ""}
-  {"- WFREDE, WSTJOH (DTracker branches)" if "DTracker" in source_systems else ""}
-  {"- WRE1, WRE2 (Raiser's Edge branches)" if "Raiser's Edge" in source_systems else ""}
-- **Source systems included:** {", ".join(source_systems)}
+**Object:** {object_name}
+**Fields:** {field_count}
+**Source systems:** {", ".join(source_systems)}
+
+**Template sheet** includes:
+- Andar Location, DT Location, Mapping Notes columns
+- SCRM Field Name and SCRM Field Label populated from mapping template
+- Calibri 12, thin borders throughout
+
+**Branch sheets:**
+{"".join(branch_lines) if branch_lines else "None"}
 """)
 
     except ValueError as e:
         progress_placeholder.empty()
         st.error(f"❌ {e}")
         st.markdown(
-            "**Tip:** Make sure you've uploaded the correct files — "
-            "the UAT tracking file first, and the strategy mapping template second."
+            "**Tip:** Make sure you uploaded the strategy mapping template "
+            "(the file with 'Template' or 'wstrat' in the name), not the UAT file."
         )
     except Exception as e:
         progress_placeholder.empty()
         st.error(f"❌ Unexpected error: {e}")
         st.markdown(
-            "Please check both files are valid `.xlsx` files and try again. "
+            "Please check the file is a valid `.xlsx` and try again. "
             "If the problem persists, contact your data team."
         )
 
 # ── Footer ─────────────────────────────────────────────────────────────────────
 st.markdown("---")
 st.caption(
-    "UAT Template Transformer · United Way Centraide Canada · "
+    "UAT Template Generator · United Way Centraide Canada · "
     "For issues contact your data migration team."
 )

@@ -1,79 +1,40 @@
-# UAT Template Transformer
+# UAT Template Generator v2
 
-A no-code web tool that transforms UAT tracking Excel files for Salesforce/NPSP data migrations.
+Generates a fully formatted UAT tracking Excel file from a single upload —
+the strategy mapping template. No UAT tracking file needed.
 
-## What it does
+## Files
 
-Upload two Excel files → click Generate → download your transformed file.
+| File | Purpose |
+|------|---------|
+| `app.py` | Streamlit UI — what the user sees |
+| `mapping_parser.py` | Reads the strategy mapping template, extracts field data |
+| `template_builder.py` | Builds the output Excel from the blank template + parsed data |
+| `styles.py` | All font/border/formatting helpers — one place to change styling |
+| `UWC_NPSP_User_Acceptance_Testing_Template.xlsx` | Hardcoded blank template |
+| `requirements.txt` | Python package dependencies |
 
-**Specifically it:**
-- Renames the main sheet to `Template`
-- Inserts an `Andar Location` column, `DT Location` column, and `Mapping Notes` column in the correct order
-- Populates those columns from the strategy mapping template (matched by SCRM API name)
-- Creates branch sheets (WHALIF/WPEI for Andar, WFREDE/WSTJOH for DTracker)
-- Applies Calibri 12 font and thin borders throughout
-- Updates any existing tester sheets (e.g. Ally, Siddig) with the new structure
+## How to deploy (Streamlit Community Cloud)
 
-## Deploy to Streamlit Community Cloud (free, ~5 minutes)
+1. Push all 6 files to your GitHub repo (`uat-transformer`)
+2. Go to share.streamlit.io → New app → select repo → main file: `app.py`
+3. Share the URL
 
-### Prerequisites
-- A [GitHub account](https://github.com)
-- A [Streamlit Community Cloud account](https://streamlit.io/cloud) (free, sign in with GitHub)
-
-### Steps
-
-1. **Create a new GitHub repository**
-   - Go to github.com → New repository
-   - Name it `uat-transformer` (or anything you like)
-   - Set it to **Public** (required for free Streamlit hosting)
-   - Click Create repository
-
-2. **Upload these files to the repository**
-   Upload all three files:
-   - `app.py`
-   - `transformer.py`
-   - `requirements.txt`
-
-   You can drag-and-drop them in the GitHub web interface.
-
-3. **Deploy on Streamlit**
-   - Go to [share.streamlit.io](https://share.streamlit.io)
-   - Click **New app**
-   - Select your GitHub repo and branch (`main`)
-   - Set **Main file path** to `app.py`
-   - Click **Deploy**
-
-4. **Share the link**
-   Streamlit gives you a URL like:
-   `https://your-name-uat-transformer-app-xyz123.streamlit.app`
-
-   Share this with your team — no login, no install, just a URL.
-
-## Making it private (optional)
-
-If you don't want the app publicly accessible:
-- In Streamlit Cloud → Settings → Sharing → set to **Only specific people**
-- Add team members by email
-
-Or: keep the GitHub repo public but the app viewer-restricted.
-
-## Local development (optional)
-
-If you want to run it on your own machine:
+## How to run locally
 
 ```bash
-pip install -r requirements.txt
+venv\Scripts\activate
 streamlit run app.py
 ```
 
-## Adding new objects
+## Adding a new object
 
-The transformer is designed to work generically across all UAT objects (GAU, Payment, Allocation, Address, Affiliation, Account Relationships, Individual Relationships, and future ones).
+No code changes needed — just upload its mapping template.
+The app detects the object name from the filename and reads
+whatever fields are in the MAPPING sheet automatically.
 
-It detects the layout automatically by scanning for known header keywords. If a new object's template uses unusual row labels, update the `_ROW_KEYWORDS` dictionary in `transformer.py`.
+## Adding Raiser's Edge support
 
-## Transferring to Microsoft (Power Automate / Teams)
-
-The core logic lives in `transformer.py` — pure Python with `openpyxl` and `pandas`.
-This same file can be deployed as an **Azure Function** and triggered from Power Automate,
-making it accessible as a button inside Microsoft Teams with no changes to the logic.
+When you have a RE mapping template, add its row label keywords
+to `ROW_KEYWORDS` in `mapping_parser.py` under `"re_field"` and `"re_logic"`,
+then handle them in `template_builder.py` the same way as Andar/DTracker.

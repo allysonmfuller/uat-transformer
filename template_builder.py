@@ -13,9 +13,22 @@ from copy import copy
 from io import BytesIO
 
 import openpyxl
-from openpyxl.styles import Alignment, Border
+from openpyxl.styles import Alignment, Border, PatternFill, Font
+from openpyxl.styles.fills import FILL_SOLID
 
 from styles import apply_std, std_font, THIN_BORDER, NO_BORDER
+
+# ── Yellow placeholder style ───────────────────────────────────────────────────
+YELLOW_FILL = PatternFill(fill_type=FILL_SOLID, fgColor="FFFF00")
+PLACEHOLDER_TEXT = "Manually fill out"
+
+def apply_placeholder(cell):
+    """Yellow background + italic grey text for cells needing manual entry."""
+    cell.value     = PLACEHOLDER_TEXT
+    cell.fill      = PatternFill(fill_type=FILL_SOLID, fgColor="FFFF00")
+    cell.font      = Font(name="Calibri", size=12, italic=True, color="888888")
+    cell.alignment = Alignment(wrap_text=False)
+    cell.border    = copy(THIN_BORDER)
 
 HEADER_ROW = 5
 DATA_START = 6
@@ -173,10 +186,14 @@ def build_output(
         apply_std(ws.cell(row=row_num, column=cols["api_name"],
                           value=api_name))
 
-        # SCRM Field Label
+        # SCRM Field Label — use placeholder if no label found in template
         label = fd.get("scrm_label", "")
-        apply_std(ws.cell(row=row_num, column=cols["label"],
-                          value=label or None))
+        cell_label = ws.cell(row=row_num, column=cols["label"])
+        if label:
+            cell_label.value = label
+            apply_std(cell_label)
+        else:
+            apply_placeholder(cell_label)
 
         # UAT columns
         for n in range(1, 13):

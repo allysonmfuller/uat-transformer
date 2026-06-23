@@ -13,30 +13,54 @@ import pandas as pd
 
 
 # ── Keyword lists for detecting each row in the mapping sheet ──────────────────
-# Each key maps to a list of substrings (lowercase) that identify that row.
-# The first matching row found wins.
+# Checked in order — first match wins for each key.
+# "^word$" means exact match (case-insensitive).
 ROW_KEYWORDS = {
-    "api_name":    ["npsp api name", "api name", "api names"],
-    "scrm_label":  ["andar label", "andar ui label"],
-    "andar_field": ["andar field:", "andar api field", "andar field -",
-                    "andar field - individuals", "andar field\n",
-                    "andar field (import", "import header"],
-    "andar_logic": ["andar logic", "^logic$"],
-    "dt_field":    ["dtracker field", "dt field", "dt api field",
-                    "dtracker field:", "dt field - individuals"],
-    "dt_logic":    ["dtracker logic", "dt logic"],
-    "object_name": ["object name", "salesforce object", "npsp object"],
+    "api_name": [
+        "npsp api name", "api name", "api names",
+        "salesforce api", "scrm api",
+    ],
+    "scrm_label": [
+        "andar label", "andar ui label", "andar label:",
+        "dt label", "dtracker label", "scrm label",
+        "field label", "ui label",
+    ],
+    "andar_field": [
+        "andar field:", "andar api field",
+        "andar field - individuals", "andar field - organizations",
+        "andar field\n", "andar field (import",
+        "import header", "andar field -",
+        "andar location",          # CampaignMember-style templates
+    ],
+    "andar_logic": [
+        "andar logic", "andar logic:",
+    ],
+    "dt_field": [
+        "dtracker field", "dt field", "dt api field",
+        "dtracker field:", "dt field - individuals",
+        "dt field - organizations",
+        "dt api field /import header",  # CampaignMember-style
+    ],
+    "dt_logic": [
+        "dtracker logic", "dt logic", "dtracker logic:",
+    ],
 }
+
+# ── Generic "LOGIC" rows need position-aware detection ────────────────────────
+# Some templates use bare "Logic" or "LOGIC" for both Andar and DT logic,
+# distinguished only by position (Andar section vs DT section).
+# We handle this separately in _find_logic_rows().
+GENERIC_LOGIC_LABELS = {"logic", "^logic$", "notes"}
 
 
 def _match(label: str, keywords: list) -> bool:
     """Return True if label matches any keyword (case-insensitive)."""
-    label = label.strip().lower()
+    label_lower = label.strip().lower()
     for kw in keywords:
         if kw.startswith("^") and kw.endswith("$"):
-            if re.fullmatch(kw[1:-1], label):
+            if re.fullmatch(kw[1:-1], label_lower):
                 return True
-        elif kw in label:
+        elif kw in label_lower:
             return True
     return False
 
@@ -49,17 +73,57 @@ def _find_mapping_sheet(wb) -> str:
     return wb.sheetnames[0]
 
 
+def _find_rows(df) -> dict:
+    """
+    Scan the mapping sheet and identify key row indices.
+
+    Handles both:
+    - Named rows: "ANDAR LOGIC:", "DTRACKER LOGIC:"
+    - Position-based bare "Logic" rows: first occurrence = Andar logic,
+      second occurrence (after DT FIELD row) = DT logic
+    """
+    row_map = {k: None for k in ROW_KEYWORDS}
+    generic_logic_rows = []  # row indices of bare "Logic" / "LOGIC" rows
+
+    for i, row in df.iterrows():
+        label = str(row.iloc[0]).strip()
+        if label in ("nan", ""):
+            continue
+
+        label_lower = label.lower()
+
+        # Check for bare "Logic" or "LOGIC" — position-dependent
+        if re.fullmatch(r"logic", label_lower) or re.fullmatch(r"notes", label_lower):
+            generic_logic_rows.append(i)
+            continue
+
+        # Try to match against all keyword lists
+        for key, keywords in ROW_KEYWORDS.items():
+            if row_map[key] is None and _match(label, keywords):
+                row_map[key] = i
+                break
+
+    # ── Assign bare "Logic" rows based on position ─────────────────────────────
+    # First "Logic" row that appears AFTER andar_field → andar_logic
+    # First "Logic" row that appears AFTER dt_field → dt_logic
+    andar_field_row = row_map["andar_field"] or 0
+    dt_field_row    = row_map["dt_field"]    or 0
+
+    for logic_row in generic_logic_rows:
+        if row_map["andar_logic"] is None and logic_row > andar_field_row:
+            row_map["andar_logic"] = logic_row
+        elif row_map["dt_logic"] is None and logic_row > dt_field_row:
+            row_map["dt_logic"] = logic_row
+
+    return row_map
+
+
 def _infer_object_name(filename: str) -> str:
     """
-    Try to extract a human-readable object name from the template filename.
-    e.g. ObjS02_02_wstrat_npe01__OppPayment__c_Template.xlsx → Payment
-
-    To add a new object: add a key/value pair to the `known` dict below.
-    The key is any lowercase substring that appears in the filename.
-    Order matters — more specific keys should come before general ones.
+    Extract a human-readable object name from the template filename.
+    Add new objects to the `known` dict as needed.
+    Order matters — more specific keys must come before general ones.
     """
-    # Key = lowercase substring to match anywhere in the filename
-    # Value = human-readable object name used in the output file
     known = {
         # ── Object Set 1-3 ────────────────────────────────────────────────────
         "opppayment":              "Payment",
@@ -95,7 +159,7 @@ def _infer_object_name(filename: str) -> str:
         "engagementplantask":      "Engagement Plan Task",
         "engagement_plan__c":      "Engagement Plan",
         "engagementplan":          "Engagement Plan",
-        # ── Generic fallbacks — must stay at the bottom ───────────────────────
+        # ── Generic fallbacks — keep at the bottom ────────────────────────────
         "campaign":                "Campaign",
     }
 
@@ -104,7 +168,7 @@ def _infer_object_name(filename: str) -> str:
         if key in lower:
             return label
 
-    # Fallback: grab the part after last __ before _Template and split CamelCase
+    # Fallback: grab the CamelCase part after last __ before _Template
     match = re.search(r"__([A-Za-z]+)__c", filename)
     if match:
         raw = match.group(1)
@@ -118,26 +182,22 @@ def parse_mapping_template(template_bytes: bytes, filename: str = "") -> dict:
     """
     Parse the strategy mapping template.
 
-    Returns a dict with two keys:
-        "fields"  : dict keyed by SCRM API name ->
-                        {scrm_label, andar_field, andar_logic, dt_field, dt_logic}
-        "meta"    : dict with object-level info ->
-                        {object_name, api_names_ordered (ordered list)}
+    Returns:
+        {
+          "fields": {api_name: {scrm_label, andar_field, andar_logic,
+                                dt_field, dt_logic}},
+          "meta":   {object_name, api_names_ordered, has_scrm_labels}
+        }
+
+    If scrm_label is not found, template_builder inserts a yellow placeholder.
     """
     wb         = openpyxl.load_workbook(BytesIO(template_bytes), data_only=True)
     sheet_name = _find_mapping_sheet(wb)
-    df         = pd.read_excel(BytesIO(template_bytes), sheet_name=sheet_name, header=None)
+    df         = pd.read_excel(
+        BytesIO(template_bytes), sheet_name=sheet_name, header=None
+    )
 
-    # ── Identify key rows by scanning col 0 ───────────────────────────────────
-    row_map = {k: None for k in ROW_KEYWORDS}
-    for i, row in df.iterrows():
-        label = str(row.iloc[0]).strip()
-        if label in ("nan", ""):
-            continue
-        for key, keywords in ROW_KEYWORDS.items():
-            if row_map[key] is None and _match(label, keywords):
-                row_map[key] = i
-                break
+    row_map = _find_rows(df)
 
     if row_map["api_name"] is None:
         raise ValueError(
@@ -152,11 +212,9 @@ def parse_mapping_template(template_bytes: bytes, filename: str = "") -> dict:
         s = str(v).strip().split("\n")[0].strip()
         api_clean.append(s if s != "nan" else "")
 
-    # Skip col 0 (it's the row-label column) and collect all field API names
     api_names_ordered = [a for a in api_clean[1:] if a]
 
     def row_to_dict(row_idx):
-        """Turn a mapping row into a {api_name: value} dict."""
         if row_idx is None:
             return {}
         row = df.iloc[row_idx].tolist()
@@ -172,10 +230,8 @@ def parse_mapping_template(template_bytes: bytes, filename: str = "") -> dict:
     dt_fields    = row_to_dict(row_map["dt_field"])
     dt_logics    = row_to_dict(row_map["dt_logic"])
 
-    # ── Merge into per-field dicts ─────────────────────────────────────────────
-    all_apis = set(api_names_ordered)
-    fields   = {}
-    for api in all_apis:
+    fields = {}
+    for api in api_names_ordered:
         fields[api] = {
             "scrm_label":  scrm_labels.get(api, ""),
             "andar_field": andar_fields.get(api, ""),
@@ -191,5 +247,6 @@ def parse_mapping_template(template_bytes: bytes, filename: str = "") -> dict:
         "meta": {
             "object_name":       object_name,
             "api_names_ordered": api_names_ordered,
+            "has_scrm_labels":   bool(scrm_labels),
         },
     }

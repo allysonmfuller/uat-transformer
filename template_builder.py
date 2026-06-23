@@ -182,11 +182,11 @@ def build_output(
                           value=notes or None),
                   wrap=bool(notes and "\n" in notes))
 
-        # SCRM Field Name
+        # SCRM Field Name (NPSP API name — always populated)
         apply_std(ws.cell(row=row_num, column=cols["api_name"],
                           value=api_name))
 
-        # SCRM Field Label — use placeholder if no label found in template
+        # SCRM Field Label (human-readable label — placeholder if not in template)
         label = fd.get("scrm_label", "")
         cell_label = ws.cell(row=row_num, column=cols["label"])
         if label:
